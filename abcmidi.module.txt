@@ -1,0 +1,228 @@
+Option Compare Database
+Option Explicit
+Sub abc2midi_hdr()
+'Dim abc_file(500) As Variant
+'Dim vstr As String
+'Dim index As Long
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+add_abc "X: 1"
+add_abc "T:" & TempVars!title
+add_abc "M:" & TempVars!Nadai & "/4"
+add_abc "L:1/4"
+add_abc "Q:280"
+'add_abc abc_file, "C: " & composer
+'% s=C, r=D, g=E, m=F, p=G, d=A, n=B
+add_abc "K: C"     'need to change the key signature to a variable
+add_abc "%%MIDI program 41"
+
+End Sub
+Sub abc2midi_hdr1()
+'Dim abc_file(500) As Variant
+'Dim vstr As String
+'Dim index As Long
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+add_abc "X: 1"
+add_abc "T:" & TempVars!title
+add_abc "M:" & TempVars!Nadai & "/4"
+add_abc "L:1/4"
+add_abc "Q:280"
+'add_abc abc_file, "C: " & composer
+'% s=C, r=D, g=E, m=F, p=G, d=A, n=B
+add_abc "K: C"     'need to change the key signature to a variable
+add_abc "%%MIDI program 41"
+
+End Sub
+Sub build_keymap(keymap As Variant, aro As Variant, avaro As Variant)
+Dim i As Long, c As Variant, tstr  As String, n As Long
+Dim found As Boolean
+Dim keymapn As Long
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+keymapn = 0
+tstr = ""
+For i = 1 To Len(aro)
+    c = Mid(aro, i, 1)
+    If c Like "[a-z]" Or c Like "[A-Z]" Then
+       keymap(keymapn, 1) = tstr
+       tstr = c
+       keymapn = keymapn + 1
+    ElseIf c Like "[1-3]" Then
+       tstr = tstr & c
+    End If
+       
+Next i
+
+'If Len(tstr) > 0 Then
+'   keymap(keymapn, 1) = tstr
+'   keymapn = keymapn + 1
+'End If
+
+tstr = ""
+For i = 1 To Len(avaro)
+    c = Mid(avaro, i, 1)
+    If c Like "[a-z]" Or c Like "[A-Z]" Then
+       n = search_array(keymap, 1, tstr, found)
+       If Not found Then
+        keymap(keymapn, 1) = tstr
+        keymapn = keymapn + 1
+       End If
+        tstr = c
+    End If
+    If c Like "[1-3]" Then
+       tstr = tstr & c
+    End If
+       
+Next i
+
+'If Len(tstr) > 0 Then
+'   keymap(keymapn, 1) = tstr
+'   keymapn = keymapn + 1
+'End If
+
+
+For i = 1 To UBound(keymap, 1)
+Select Case keymap(i, 1)
+'   C   C#  D   D#  E   F   F#  G   G#  A   A#  B
+'   S   R1  R2  G2  G3  M1  M2  P   D1  D2  N2  N3
+'   E   F   F#  G   G#  A   A#  B   C   C#  D   D#
+Case "S"
+   keymap(i, 2) = "E"
+Case "R1"
+   keymap(i, 2) = "=F"
+Case "R2", "G1"
+    keymap(i, 2) = "^F"
+Case "R3", "G2"
+    keymap(i, 2) = "=G"
+Case "G3"
+    keymap(i, 2) = "^G"
+Case "M1"
+    keymap(i, 2) = "=A"
+Case "M2"
+    keymap(i, 2) = "^A"
+Case "P"
+    keymap(i, 2) = "B"
+Case "D1"
+    keymap(i, 2) = "=C"
+Case "D2", "N1"
+    keymap(i, 2) = "^C"
+Case "D3", "N2"
+    keymap(i, 2) = "=D"
+Case "N3"
+    keymap(i, 2) = "^D"
+End Select
+   keymap(i, 1) = Left(keymap(i, 1), 1)
+Next i
+End Sub
+
+Sub event_abc(vstr As Variant, abc As String, keymap As Variant)
+Dim i As Long, c As String, c1 As String
+Static pre
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+Select Case Trim(vstr)
+Case ";"
+   If pre = "" Then
+      c = "z2"
+      'abc = abc & "z2"
+   ElseIf Right(pre, 1) = "2" Then
+      '
+   ElseIf Right(pre, 1) = "/" Then
+      c = Left(pre, Len(pre) - 1) & "2"
+   Else
+      c = pre & "2"
+   End If
+Case ","
+   If pre = "" Then
+      c = "z"
+      'abc = abc & "z2"
+   ElseIf Right(pre, 1) = "2" Then
+      c = Left(pre, Len(pre) - 1)
+   ElseIf Right(pre, 1) = "/" Then
+      c = Left(pre, Len(pre) - 1)
+   Else
+      c = pre
+   End If
+
+Case Else
+
+    c = map(vstr, keymap)
+End Select
+
+abc = abc & c
+
+pre = c
+End Sub
+Sub event_bar(abc As String)
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+    abc = abc & "|"
+End Sub
+Sub add_abc(stradd As String)
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+
+TempVars!abc_file = TempVars!abc_file & stradd & vbCrLf
+End Sub
+Private Function map(vstr As Variant, keymap As Variant) As String
+Dim i As Long, c As String, n As Long, vstr1 As String
+n = 1
+c = ""
+Do While n <= Len(vstr)
+    vstr1 = Mid(vstr, n, 1)
+    
+    For i = 1 To UBound(keymap, 1)
+    If UCase(vstr1) = keymap(i, 1) Then
+       c = keymap(i, 2)
+       Exit For
+    End If
+    
+    Next i
+    
+    n = n + 1
+    If n <= Len(vstr) Then
+      If Mid(vstr, n, 1) = ChrW(&H307) Then  ' next octave
+         c = LCase(c)
+         n = n + 1
+      ElseIf Mid(vstr, n, 1) = ChrW(&H323) Then  ' lowe octave
+         c = c & ","
+         n = n + 1
+      End If
+    End If
+    
+    If vstr1 Like "[a-z]" Then
+       If Left(vstr, 1) = "(" Then
+          c = c & "/"
+       End If
+    ElseIf vstr1 Like "[A-Z]" Then
+       If Left(vstr, 1) = "(" Then
+        
+       Else
+          c = c & "2"
+       End If
+    End If
+   map = map & c
+   c = ""
+Loop
+End Function
+Sub write_abc()
+Dim i As Long
+Dim fname As String
+Dim ofile As Object
+Dim fso As Object
+If get_config("AbcMidiOption") = "NO" Then Exit Sub
+
+fname = TempVars!abcpath & TempVars!title & ".abc"
+Set fso = CreateObject("Scripting.filesystemobject")
+Set ofile = fso.CreateTextFile(fname, True)
+ofile.Write TempVars!abc_file
+   
+ofile.Close
+Set fso = Nothing
+Set ofile = Nothing
+End Sub
+
+Sub setup_abcmidi(keymap As Variant)
+Dim aro As Variant, avaro As Variant
+If TempVars!abcoption = "NO" Then Exit Sub
+
+
+    Call build_keymap(keymap, TempVars!aro, TempVars!avaro)
+    Call abc2midi_hdr
+
+End Sub

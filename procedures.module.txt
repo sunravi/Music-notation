@@ -1,0 +1,1730 @@
+
+
+Option Compare Database
+Option Explicit
+Dim list As New clslist
+Dim schemas As New Dictionary
+Private Const ctab As Double = 0.5
+Dim w  As Word.Application
+
+Dim keymap(12, 2) As Variant
+Dim Notation(500, 50) As String
+Dim vparas() As String
+Dim paras() As String
+Dim para_hi() As String
+Dim para_lo() As String
+Dim para_type() As String
+Dim para_seq() As String
+Dim gparacnt As Integer
+'Dim Division As Integer 'normal division is 4 tisram is 3 this same as tempvars!nadai
+'Dim tabs As Integer
+'Dim beats As Single ' adi talam 8 beats
+Dim tala_structure() As String 'global variable Adi talam 4,6,8
+'Sub AutoOpen()
+'Load_cbTalam
+'End Sub
+Sub load_seq(rst As Recordset)
+    list.newlist
+    With rst
+    Do While Not .EOF
+        list.append rst!Seq
+        rst.MoveNext
+    Loop
+    End With
+    list.list_nodes
+End Sub
+Function create_seq(pos As String, node As Long) As Long
+    create_seq = list.new_node(pos, node)
+End Function
+Sub delete_seq(node As Long)
+    list.Delete (node)
+End Sub
+Function build_schema(Lang As String) As Dictionary
+Dim objtrans As Object 'transliteration class object
+Dim fso As FileSystemObject
+Dim folder As String
+Dim lang_swaras As String
+Dim rulefile As String
+Dim schema As Dictionary
+If Lang = "X" Then
+    Set build_schema = Nothing
+    Exit Function
+End If
+If Not schemas.Exists(Lang) Then
+    folder = get_config("LanguageFolder")
+    rulefile = CurrentProject.path & "\" & folder & _
+            "\" & Lang & ".xlsx"
+    Set objtrans = create_objTrans
+    Set schema = objtrans.schema(rulefile)
+    schemas.Add Lang, schema
+    
+    lang_swaras = Lang & "_swaras"
+    rulefile = CurrentProject.path & "\" & folder & _
+            "\" & lang_swaras & ".xlsx"
+    Set schema = objtrans.schema(rulefile)
+    schemas.Add lang_swaras, schema
+End If
+Set build_schema = schemas(Lang)
+End Function
+Sub batch_notate()
+Dim batch As Recordset
+
+
+Set batch = CurrentDb.OpenRecordset( _
+"select * from Kritis where status <> 'Complete' and status <> 'Error'") ' Ready or check
+'
+'   Process records from Kriti table with status = R (ready)
+
+Do While Not batch.EOF
+    notate_title (batch)
+next_batch:
+    batch.MoveNext
+Loop
+
+
+End Sub
+Sub notate_title(batch As Recordset)
+Dim i As Long, j As Long, M As Long, n As Long, Q As Long
+Dim i1 As Long, j1 As Long, m1 As Long, n1 As Long, q1 As Long
+Dim Ragam As Recordset
+Dim title As String
+Dim fname As String, fname2 As String
+Dim found As Boolean
+Dim strWidth As String
+Dim rec_count As Long
+Dim fso As New FileSystemObject
+Dim var As String
+ReDim paras(200) As String
+ReDim para_type(200) As String
+ReDim para_seq(200) As String
+
+setup_tempvars batch
+Set w = New Word.Application
+    If batch!Source = "Excel" Then
+        rec_count = DCount("*", "Notations", "kriti = '" & batch!Kriti & "'")
+        If rec_count > 0 Then
+            batch.Edit
+            batch!Status = "Error"
+            batch!Err_msg = "Records exist in Notations table for this title"
+            batch.Update
+            Exit Sub
+        End If
+        If Not fso.FileExists(TempVars!ipath & "\" & Trim(TempVars!title) & ".xlsx") Then
+            batch.Edit
+            batch!Status = "Error"
+            batch!Err_msg = "Source excel File does not exist for this title"
+            batch.Update
+            Exit Sub
+        End If
+        
+        read_xlfile batch
+        batch.Edit
+        batch!Source = "Table"
+        batch.Update
+    End If
+
+    ' check batch(m+1,8) and set page orientation
+    'composer = batch(M, 3)
+' Title line
+    initialise batch
+    ' may be an option in kritis table
+    If batch!Source = "Table" Then
+        read_notations
+    End If
+    
+    setup_abcmidi keymap
+    
+    Call new_parse_xlinput
+    Call Create_document
+    out_title_lines batch
+    If get_config("Includelyrics") = "YES" Then
+        Call print_lyrics
+    End If
+    Call notate_unic
+    Call write_abc
+    
+    If batch!Status = "Ready" Then
+        fname = TempVars!opath & "\" & TempVars!title & ".docx"
+        w.ActiveDocument.Protect Password:="notation", NoReset:=False, Type:= _
+            wdAllowOnlyReading, UseIRM:=False, EnforceStyleLock:=False
+        w.ActiveDocument.SaveAs2 filename:=fname, FileFormat:=wdFormatDocumentDefault
+        w.ActiveDocument.Close
+        
+        ' ***Check*** code to update kritis table after the notation is generated
+        batch.Edit
+        batch!Status = "Completed"
+        batch.Update
+        ' status, link to notation, lock etc
+        'oData.Text = "Y"
+        'w.ActiveDocument.Save
+'
+' Update Music notation list
+'
+       End If
+ '       End If
+
+w.Quit
+Set w = Nothing
+ReDim paras(200) As String
+ReDim para_type(200) As String
+ReDim para_seq(200) As String
+
+End Sub
+Function get_config(p_key As String) As String
+get_config = Trim(dlookup("key_value", "Config", "key = '" & p_key & "'"))
+End Function
+Sub setup_tempvars(batch As Recordset)
+    TempVars!title = batch!Kriti & "-" & batch!Ragam & "-" & batch!Talam
+    TempVars!ipath = CurrentProject.path & "\" & get_config("SourceFolder")
+    TempVars!filter = "kriti & '-' & ragam & '-' & talam = '" & TempVars!title & "'"
+    TempVars!abcoption = UCase(get_config("abcmidioption"))
+    TempVars!Kriti = CStr(batch!Kriti)
+    TempVars!Ragam = CStr(batch!Ragam)
+    TempVars!Talam = CStr(batch!Talam)
+    TempVars!beats_per_line = CDec(batch!beats_per_line)
+    TempVars!Nadai = dlookup("Matra", "Nadais", "Nadai = '" & batch!Nadai & "'")
+    TempVars!Jaathi = dlookup("Laghu", "Jathees", "Jaathi = '" & batch!Jathi & "'")
+    TempVars!abc_file = ""
+    TempVars!aro = Trim(dlookup("Arohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
+    TempVars!avaro = Trim(dlookup("Avarohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
+    TempVars!opath = CurrentProject.path & "\" & get_config("NotationFolder")
+    TempVars!abcpath = CurrentProject.path & "\" & get_config("abcmidifolder")
+    TempVars!strfilter = "kriti = '" & batch!Kriti & "' and " & _
+             "ragam = '" & batch!Ragam & "' and " & _
+             "talam = '" & batch!Talam & "'"
+    
+    TempVars!Lang = CStr(Nz(batch!Lang, "X"))
+    set_fontnames (TempVars!Lang)
+
+End Sub
+Private Sub set_fontnames(Lang As String)
+If Lang = "X" Then
+    TempVars!Notation_font = "Segoe UI Semibold"
+    TempVars!Sahityam_font = "Arial Unicode Ms"
+    Exit Sub
+End If
+TempVars!Notation_font = dlookup("notation_font", "Languages", "lang = '" & Lang & "'")
+TempVars!Sahityam_font = dlookup("Sahityam_font", "Languages", "lang = '" & Lang & "'")
+End Sub
+
+Private Sub out_title_lines(batch As Recordset)
+Dim janya As String
+Dim mela As String
+Dim aro As Variant, avaro As Variant
+
+    'gparacnt = 1
+    'para_type(gparacnt) = "T"
+    'para_seq(gparacnt) = ""
+    write_doc "T", batch!Ragam & vbTab & batch!Kriti & vbTab & batch!Talam
+    'paras(gparacnt) = batch!Ragam & vbTab & batch!Kriti & vbTab & batch!Talam
+    '
+    '  get the ragam details from ragam table
+    '
+    aro = Trim(dlookup("Arohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
+    avaro = Trim(dlookup("Avarohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
+    mela = Trim(dlookup("Mela", "Ragams", "Ragam='" & batch!Ragam & "'"))
+
+    janya = Trim(dlookup("Classification", "Ragams", "Ragam='" & batch!Ragam & "'"))
+' moorchana
+    mela = "Mela " & mela & " " & janya
+    'gparacnt = gparacnt + 1
+    'para_type(gparacnt) = "M"
+    'para_seq(gparacnt) = ""
+    write_doc "M", "Aro:" & vbTab & aro & vbTab & mela & vbTab & batch!Composer
+    'paras(gparacnt) = "Aro:" & vbTab & aro & vbTab & mela & vbTab & batch!Composer
+    'vparas(gparacnt) = "M" & "$" & "" & "$" & _
+     '      "Aro:" & vbTab & aro & vbTab & mela & vbTab & batch(M, 3)
+    'gparacnt = gparacnt + 1
+    'para_type(gparacnt) = "M"
+    'para_seq(gparacnt) = ""
+    write_doc "M", "Avaro:" & vbTab & avaro
+    'paras(gparacnt) = "Avaro:" & vbTab & avaro
+End Sub
+Function search_array(arr As Variant, column As Long, what As Variant, found As Boolean) As Long
+Dim M As Long
+
+found = False
+search_array = 0
+For M = LBound(arr, 1) To UBound(arr, 1)
+    If arr(M, column) = what Then
+       search_array = M
+       found = True
+       Exit For
+    End If
+Next M
+
+End Function
+Sub read_xlfile(rst As Recordset)
+    Dim ifile As String
+    Dim title As String
+    Dim Notes As Recordset
+    Dim lngseq As Long, lng_line As Long
+    Dim flush As Boolean
+    Dim strtext As String
+    Dim strheading As String
+    Dim vstr As String
+    Dim lng_seq As Long
+    Dim rng As excel.Range
+    Dim xlApp As excel.Application
+    Dim xlBook As excel.Workbook
+    Dim xlSheet As excel.Worksheet
+    Dim rw As excel.Range
+    Dim i As Long
+    
+    'ReDim Preserve paras(200) As String
+    'ReDim Preserve para_type(200) As String
+    'ReDim Preserve para_seq(200) As String
+    'ReDim para_hi(200) As String
+    'ReDim para_lo(200) As String
+    
+    Set Notes = CurrentDb.OpenRecordset("Notations")
+    
+    Set xlApp = CreateObject("Excel.Application")
+    'title = rst!Kriti & "-" & rst!Ragam & "-" & rst!Talam
+    ifile = TempVars!ipath & "\" & Trim(TempVars!title) & ".xlsx"
+    xlApp.Workbooks.Open filename:=ifile
+    Set xlSheet = xlApp.ActiveSheet
+    Set rng = xlSheet.UsedRange
+    'gparacnt = 0
+    For Each rw In rng.Rows
+    
+    If IsEmpty(rw.Cells(1, 1)) Then GoTo next_row
+    
+    If UCase(rw.Cells(1, 1).Value) = "H" Then
+'        If flush Then
+'            notes.Update
+'            flush = False
+'        End If
+        strheading = rw.Cells(1, 3).Value
+     End If
+    If UCase(rw.Cells(1, 1).Value) = "N" Then
+'        If flush Then
+'            notes.Update
+'            flush = False
+'        End If
+        Notes.AddNew
+        Notes!Kriti = rst!Kriti
+        Notes!Ragam = rst!Ragam
+        Notes!Talam = rst!Talam
+        Notes!Heading = strheading
+        strtext = ""
+        lng_seq = lng_seq + 16
+        Notes!Seq = lng_seq
+        'If Nz(rw.Cells(1, 2).Value, "0") Like "[0-9]" Then
+            Notes!Sangathi = rw.Cells(1, 2).Value
+        'Else
+        '    Notes!Sangathi = vbNull
+        'End If
+        For i = 3 To rw.Columns.Count
+            If rw.Cells(1, i) <> "" And rw.Cells(1, i) <> "|" Then
+                    strtext = strtext & rw.Cells(1, i).Value
+            End If
+        Next i
+        
+        strtext = Replace(strtext, "/", "'")
+        strtext = Replace(strtext, "\", ".")
+        
+        Notes!Swaram = strtext
+     End If
+    If UCase(rw.Cells(1, 1).Value) = "S" Then 'Sahithyam
+'        flush = True
+        strtext = ""
+        For i = 3 To rw.Columns.Count
+            vstr = Trim(rw.Cells(1, i).Value)
+            If vstr = "" Then GoTo next_i
+            If Right(vstr, 1) = "-" Then
+                vstr = Left(vstr, Len(vstr) - 1)
+            End If
+            If vstr <> "" And vstr <> "|" Then
+                strtext = strtext & vstr
+                If procedures.get_config("readxlfilecomma") = "YES" And vstr <> ";" And vstr <> "," Then
+                strtext = strtext & ","
+                End If
+            End If
+next_i:
+        Next i
+        Notes!Sahithyam = strtext
+        Notes.Update
+        
+    End If
+     
+'        gparacnt = gparacnt + 1
+'        para_type(gparacnt) = UCase(rw.Cells(1, 1).Value)
+'        para_seq(gparacnt) = rw.Cells(1, 2).Value
+'
+'        For i = 3 To rw.Columns.Count
+'            If rw.Cells(1, i) <> "" Then
+'                    paras(gparacnt) = paras(gparacnt) & rw.Cells(1, i).Value
+'            End If
+'        Next i
+next_row:
+    Next rw
+'read the sheet and build the array straight
+  
+    xlApp.ActiveWorkbook.Close
+    xlApp.Quit
+    Set xlSheet = Nothing
+     
+
+End Sub
+
+Private Sub read_notations()
+Dim rst As Recordset
+Dim strheading As String
+
+Set rst = CurrentDb.OpenRecordset("select * from Notations where " & TempVars!strfilter & _
+          " order by kriti, ragam, talam, seq ")
+
+strheading = Space(1)
+Do While Not rst.EOF
+    If rst!Heading <> strheading Then
+        strheading = rst!Heading
+        gparacnt = gparacnt + 1
+        para_type(gparacnt) = "H"
+        'para_seq(gparacnt) = rw.Cells(1, 2).Value
+        paras(gparacnt) = strheading
+        
+    End If
+        gparacnt = gparacnt + 1
+        para_type(gparacnt) = "N"
+        para_seq(gparacnt) = Nz(rst!Sangathi, " ")
+        paras(gparacnt) = rst!Swaram
+
+        gparacnt = gparacnt + 1
+        para_type(gparacnt) = "S"
+        paras(gparacnt) = rst!Sahithyam
+    
+    rst.MoveNext
+Loop
+
+End Sub
+
+
+Sub initialise(batch As Recordset)
+Dim beats As Single
+Dim i As Long, talaidx As Long, jaathiidx As Long
+Dim tala_array() As Variant
+Dim jaathi_array() As Variant
+Dim found As Boolean
+Dim Talam As String
+Dim array_tala_angam() As String
+Dim tala_angam As String
+
+
+'get the path from configuration o
+    'Get the transliteration schema
+    build_schema (TempVars!Lang)  ' version 5
+    tala_angam = dlookup("Angam", "Talams", "Talam='" & TempVars!Talam & "'")
+    
+        
+    beats = 0
+    
+    array_tala_angam = Split(tala_angam, ",")
+    
+    Talam = ""
+    For i = 0 To UBound(array_tala_angam)
+    Select Case array_tala_angam(i)
+    Case "L"
+      beats = beats + TempVars!Jaathi * batch!Kalai
+    Case "A"
+      beats = beats + 1 * batch!Kalai
+    Case "D"
+      beats = beats + 2 * batch!Kalai
+    Case "C"
+      beats = beats + 1.5 * batch!Kalai
+    End Select
+    Talam = Talam & beats & ","
+    Next i
+    Talam = Left(Talam, Len(Talam) - 1)
+    tala_structure = Split(Talam, ",")
+    'Division = TempVars!Nadai
+    TempVars.Add "div_per_line", TempVars!Nadai * TempVars!beats_per_line 'adi 4 * 4 = 16
+    TempVars.Add "tala_cycle", beats * TempVars!Nadai
+    'Set odoc = ActiveDocument
+    'w.Selection.Font.Size = 12
+
+
+
+End Sub
+
+Sub new_parse_xlinput()
+'declarations
+Dim mcnt As Variant
+Dim vseq As Long
+Dim str_array() As String
+Dim colon_pos As Long
+Dim vstr As String, wstr As String, c As String, nextc As String
+Dim strlen As Integer
+Dim split_hash() As String
+Dim split_notation() As String
+Dim split_sahityam() As String
+Dim matra As Single, matracnt As Single
+Dim i As Integer, j As Integer, k As Integer
+Dim regex1 As New RegExp
+Dim regex2 As New RegExp
+Dim regexlc As New RegExp
+Dim regex As New RegExp
+Dim matra_div As Integer
+'
+'new idea to  build the notation in array
+'only for sahityam
+'
+ReDim Preserve paras(gparacnt)
+ReDim Preserve para_hi(gparacnt)
+ReDim Preserve para_lo(gparacnt)
+ReDim Preserve para_type(gparacnt)
+ReDim Preserve para_seq(gparacnt)
+'ReDim duritha(gparacnt)
+For i = 1 To UBound(paras)
+'
+If para_type(i) Like "[!S,N]" Or paras(i) = "" Then GoTo next_i
+
+'
+vstr = paras(i)
+mcnt = Count_aksharams(vstr, TempVars!title, para_type(i), "$")
+'Debug.Print mcnt
+wstr = ""
+If Len(vstr) > 1 Then
+    vstr = Left(vstr, Len(vstr) - 1)
+    paras(i) = vstr
+End If
+next_i:
+Next i
+' check matra count
+j = 0
+For i = 1 To UBound(paras)
+If para_type(i) = "T" Or para_type(i) = "M" Then
+   j = j + 1
+End If
+If para_type(i) = "S" Or para_type(i) = "N" Then
+    'Call check_matra_count(i - j, paras(i))
+End If
+Next i
+
+End Sub
+Function transliterate(str As String, Lang As String, in_type As String) As String
+Dim schema As Dictionary
+Dim lang_swaras As String
+Dim objtrans As Object
+Dim outstr As String
+Set objtrans = create_objTrans()
+outstr = str
+If in_type Like "[MTH]" Or Lang = "X" Then
+    transliterate = str
+    Exit Function
+End If
+    
+If in_type = "N" Then
+    lang_swaras = Lang & "_swaras"
+    Set schema = build_schema(lang_swaras)
+    outstr = objtrans.convert_string(outstr, schema)
+End If
+Set schema = build_schema(Lang)
+transliterate = objtrans.convert_string(outstr, schema)
+End Function
+
+Sub check_matra_count(i As Long, para As String)
+
+Dim temp_array() As String
+temp_array() = Split(para, "$")
+
+If (UBound(temp_array) + 1) Mod TempVars!div_per_line > 0 Then
+   msgbox TempVars!title & vbCrLf & "Matra count error in row " & i & " " & UBound(temp_array) + 1
+End If
+Erase temp_array
+End Sub
+
+Sub write_doc(p_type As String, p_para As String)
+
+' need to take care of new text/comments/heading paragraphs
+' need to take care of margins/sangathi count
+Dim uline() As String
+Dim uline_pos() As String
+Dim from As Integer
+Dim char_count As Integer
+
+Dim i As Long, j As Long
+
+p_para = Replace(Left(p_para, 1), Chr$(9), "") & Right(p_para, Len(p_para) - 1)
+p_para = Replace(p_para, Chr$(10), "")
+p_para = Replace(p_para, Chr$(12), "")
+p_para = Replace(p_para, Chr$(13), "")
+
+Select Case p_type
+Case "T"
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("n_title")
+    w.Selection.TypeParagraph
+Case "H"
+       If w.Selection.Information(wdVerticalPositionRelativeToPage) + 76 > w.ActiveDocument.PageSetup.PageHeight - w.ActiveDocument.PageSetup.BottomMargin Then
+            w.Selection.InsertBreak Type:=wdPageBreak
+        End If
+
+    p_para = Replace(p_para, Chr$(9), " ")
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("n_subhead")
+    w.Selection.TypeParagraph
+    
+Case "M"
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("n_moorchana")
+    w.Selection.TypeParagraph
+    
+Case "L"
+    p_para = Replace(p_para, Chr$(9), " ")
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("n_lyrics")
+    w.Selection.TypeParagraph
+    
+Case "S"
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("sahityam")
+    w.Selection.TypeParagraph
+    
+
+Case "N"
+    ' Tara Stayi line
+    'w.Selection.TypeText Text:=p_hi
+    w.Selection.Style = w.ActiveDocument.Styles("Hi_Octave")
+    
+    'swara line
+    w.Selection.TypeParagraph
+    w.Selection.TypeText Text:=p_para
+    w.Selection.Style = w.ActiveDocument.Styles("Swara")
+    
+    'duritha kalam
+    'uline() = Split(p_duritha, ",")
+    For j = 1 To UBound(uline)
+        If uline(j) <> "" Then
+        uline_pos() = Split(uline(j), "-")
+        from = uline_pos(0)
+        char_count = uline_pos(1)
+        w.Selection.HomeKey unit:=wdLine
+        w.Selection.MoveRight unit:=wdCharacter, Count:=from
+        w.Selection.MoveRight unit:=wdCharacter, Count:=char_count, Extend:=wdExtend
+        w.Selection.Font.Underline = wdUnderlineSingle
+        End If
+    Next j
+    w.Selection.EndKey unit:=wdLine
+    
+    'Mandra stayi line
+    w.Selection.TypeParagraph
+    'w.Selection.TypeText Text:=p_lo
+    w.Selection.Style = w.ActiveDocument.Styles("Lo_Octave")
+    w.Selection.TypeParagraph
+End Select
+End Sub
+Private Sub print_lyrics()
+Dim rst As Recordset
+Dim strheading As String
+Set rst = CurrentDb.OpenRecordset("select * from lyrics " & _
+        " where " & TempVars!strfilter & _
+        " Order by Kriti, ragam, talam, seq")
+strheading = " "
+With rst
+Do While Not .EOF
+    If strheading <> !Heading Then
+        strheading = !Heading
+        write_doc "H", strheading
+    End If
+    write_doc "L", !Lyric
+    'End If
+    .MoveNext
+Loop
+End With
+End Sub
+Sub notate_unic()
+'
+' start writing out notation in word document
+'declarations
+Dim gtype As String
+Dim str_array() As String
+Dim str_hi() As String
+Dim str_lo() As String
+Dim s As Integer, n As Integer, t As Long, k As Long
+Dim i As Integer, c As String, chars As Integer, charCount As Integer
+Dim nextc As String
+Dim j As Integer, pcount As Integer, scount As Integer
+Dim x As Integer
+Dim tara As Boolean, mandra As Boolean, two As Boolean
+Dim matra As Single, v_seq As String
+Dim pre_c As Boolean, cur_c As Boolean, break As Boolean
+Dim tala_part As Integer
+Dim more As Long
+
+ReDim Preserve paras(gparacnt)
+ReDim Preserve para_hi(gparacnt)
+ReDim Preserve para_lo(gparacnt)
+ReDim Preserve para_type(gparacnt)
+ReDim Preserve para_seq(gparacnt)
+
+'code
+'main do loop
+more = 1
+
+Do While more < UBound(paras)
+'
+' set of Lyrics records
+'
+For j = more To UBound(paras) Step 1
+If para_type(j) = "S" Or para_type(j) = "N" Or para_type(j) = "" Then
+    Exit For
+End If
+more = j + 1
+write_doc para_type(j), paras(j)
+Next j
+
+If more > UBound(paras) Then
+    Exit Do
+End If
+Erase Notation
+
+n = 1
+s = 2
+For j = more To UBound(paras)
+    If para_type(j) <> "S" And para_type(j) <> "N" Then
+        Exit For
+    End If
+    ' this is the place to force a break incase of
+    str_array = Split(paras(j), "$")
+    If para_type(j) = "N" Then
+       str_hi = Split(para_hi(j), "$")
+       str_lo = Split(para_lo(j), "$")
+    End If
+    
+    Notation(n, 0) = para_seq(j)
+    t = 1
+    
+    For k = 0 To UBound(str_array)
+        If para_type(j) = "N" Then
+            For x = 1 To Len(str_array(k))
+                c = Mid(str_array(k), x, 1)
+                If c <> "." And c <> "'" Then
+                    Notation(n, t) = Notation(n, t) & c
+                End If
+                nextc = ""
+                If x < Len(str_array(k)) Then
+                    nextc = Mid(str_array(k), x + 1, 1)
+                End If
+                
+                If Trim(nextc) = "'" Then
+                    Notation(n, t) = Notation(n, t) & ChrW(&H307) 'higher octave
+                ElseIf Trim(nextc) = "." Then
+                    Notation(n, t) = Notation(n, t) & ChrW(&H323)  ' lower octave
+                End If
+            Next x
+            'Notation(n, t) = str_hi(k)
+            'If Trim(str_hi(k)) = "." Then
+            '    Notation(n, t) = str_array(k) & ChrW(&H307)
+            'ElseIf Trim(str_lo(k)) = "." Then
+            '    Notation(n, t) = str_array(k) & ChrW(&H323)
+            'Else
+            '    Notation(n, t) = str_array(k)
+            'Notation(n + 2, t) = str_lo(k)
+            'End If
+        Else
+            Notation(s, t) = str_array(k)
+        End If
+        t = t + 1
+        If t > TempVars!div_per_line Then
+            t = 1
+            If para_type(j) = "N" Then
+                'Notation(n, 50) = "Hi_Octave"
+                Notation(n, 50) = "Swara"
+                'Notation(n + 2, 50) = "Lo_Octave"
+                n = n + 2
+            Else
+                Notation(s, 50) = "sahityam"
+                s = s + 2
+            End If
+        End If
+    Next k
+    
+            If t > 1 Then
+            t = 1
+            If para_type(j) = "N" Then
+                'Notation(n, 50) = "Hi_Octave"
+                Notation(n, 50) = "Swara"
+                'Notation(n + 2, 50) = "Lo_Octave"
+                n = n + 2
+            Else
+                Notation(s, 50) = "sahityam"
+                s = s + 2
+            End If
+        End If
+
+    
+    
+more = j + 1
+Next j
+'
+'call printing routine for N and S
+'
+print_notation_unic (n)
+
+' print rouine
+'
+
+Loop
+
+End Sub
+
+Sub print_notation_unic(n As Long)
+Dim vstr As String, i As Long
+Dim nmatra As Integer, smatra As Integer
+Dim eduppu As Integer
+nmatra = 0
+smatra = 0
+eduppu = TempVars!Nadai
+If TempVars!Talam = "Desadi" Then
+     eduppu = 6
+End If
+For i = 1 To n - 1     'notation lines
+    If Notation(i, 50) = "" Then
+       Exit For
+    End If
+    If Trim(Notation(i, 0)) <> "" Or nmatra <= eduppu Then  ' i,0 has the sequence. This the place where it resets the matra
+       nmatra = 0
+       smatra = 0
+    End If
+    If Notation(i, 50) = "Swara" Then
+       If w.Selection.Information(wdVerticalPositionRelativeToPage) + 43 > w.ActiveDocument.PageSetup.PageHeight - w.ActiveDocument.PageSetup.BottomMargin Then
+            w.Selection.InsertBreak Type:=wdPageBreak
+        End If
+           
+    End If
+    w.Selection.Style = w.ActiveDocument.Styles(Notation(i, 50))
+
+    Select Case Notation(i, 50)
+    Case "Swara"
+       Call Print_swara(i, nmatra)
+    
+    Case "sahityam"
+       Call print_sahityam(i, smatra)
+    End Select
+    
+    w.Selection.TypeParagraph
+    If Notation(i, 50) = "sahityam" Then DrawLine
+Next i
+
+End Sub
+Function tala_division(matra As Integer) As Boolean
+Dim i As Long
+tala_division = False
+For i = 0 To UBound(tala_structure)
+    If matra = tala_structure(i) * TempVars!Nadai Then
+       tala_division = True
+    End If
+Next i
+End Function
+Sub Print_swara(i As Long, nmatra As Integer)
+Dim chapu As Integer
+Dim abc As String
+Dim j As Long
+Dim vstr As String
+Dim uline As Integer, ulineend As Integer
+Const kalam As Single = 1.4 'to get underline code
+uline = 0
+abc = ""
+If TempVars!Talam Like "*Chapu" Then
+   chapu = TempVars!Nadai / 2
+Else
+   chapu = 0
+End If
+    For j = 0 To TempVars!div_per_line       'notations
+        If Notation(i, j) = "" And j > 0 Then
+           Exit For
+        End If
+        vstr = Replace(Notation(i, j), Chr(9), "")
+        ' ***check*** moving to the end
+        'If j > 0 Then
+        '    w.Selection.TypeText Text:=vbTab
+        'End If
+        '
+        ' convert to abc notation
+        '
+        event_abc vstr, abc, keymap
+        Do While Left(vstr, 1) = "("
+        'If Left(Notation(i, j), 1) = "(" Then
+           vstr = Right(vstr, Len(vstr) - 1)
+           uline = uline + kalam
+           ulineend = uline
+        'End If
+        Loop
+           w.Selection.Font.Underline = uline
+           
+        Do While Right(vstr, 1) = ")"
+        'If Right(Notation(i, j), 1) = ")" Then
+           vstr = Left(vstr, Len(vstr) - 1)
+           ulineend = ulineend - kalam
+           'w.Selection.Font.Underline = uline
+        'End If
+        Loop
+        'w.Selection.Font.Name = "Segoe UI Semibold"
+        w.Selection.Font.Name = TempVars!Notation_font
+        vstr = transliterate(vstr, TempVars!Lang, "N") ' version 5
+
+        w.Selection.TypeText Text:=vstr
+           
+        ' ***check*** moving to the end
+        ' w.Selection.Font.Underline = wdUnderlineNone
+        
+        If (j - chapu) / TempVars!Nadai = (j - chapu) \ TempVars!Nadai And j - chapu > 0 Then
+            w.Selection.TypeText Text:=vbTab
+' single line nadai separator
+            w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9474, _
+                     Unicode:=True
+            w.Selection.MoveLeft unit:=wdCharacter, Count:=1, Extend:=wdExtend
+            w.Selection.Font.Color = -603923969
+            w.Selection.MoveRight unit:=wdCharacter, Count:=1
+            w.Selection.Font.Color = wdColorAutomatic
+            event_bar abc
+        End If
+        If j > 0 Then
+           nmatra = nmatra + 1
+        'End If
+        '==
+        If nmatra = TempVars!tala_cycle Then
+' Double end of cycle
+            w.Selection.MoveLeft unit:=wdCharacter, Count:=1, Extend:=wdExtend
+            w.Selection.Font.Color = wdColorAutomatic
+            w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9553, _
+                 Unicode:=True
+            nmatra = 0
+            event_bar abc
+        Else
+        '==
+        
+        'If j > 0 And j < tempvars!div_per_line Then
+            If tala_division(nmatra) Then
+' single vertical
+                w.Selection.MoveLeft unit:=wdCharacter, Count:=1, Extend:=wdExtend
+                w.Selection.Font.Color = wdColorAutomatic
+                w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9474, _
+                     Unicode:=True
+                event_bar abc
+            End If
+            
+        End If
+        End If
+        If j < TempVars!div_per_line Then
+            'If Left(Notation(i, j + 1), 1) <> "(" Then
+                w.Selection.Font.Underline = ulineend
+                uline = ulineend
+            'End If
+            w.Selection.TypeText Text:=vbTab
+        End If
+    Next j
+    add_abc abc
+
+End Sub
+Sub print_sahityam(i As Long, smatra As Integer)
+Dim j As Long
+Dim vstr As String
+Dim chapu As Integer
+If TempVars!Talam Like "*Chapu" Then
+   chapu = TempVars!Nadai / 2
+Else
+   chapu = 0
+End If
+    For j = 0 To TempVars!div_per_line       'notations
+        If Notation(i, j) = "" And j > 0 Then
+           Exit For
+        End If
+        vstr = Replace(Notation(i, j), ",", " ") 'beta version 3
+           
+        If j > 0 Then
+            w.Selection.TypeText Text:=vbTab
+        End If
+        w.Selection.Font.Name = TempVars!Sahityam_font
+        vstr = transliterate(vstr, TempVars!Lang, "S") ' version 5
+        w.Selection.TypeText Text:=vstr
+        
+        If (j - chapu) / TempVars!Nadai = (j - chapu) \ TempVars!Nadai And j - chapu > 0 Then
+            w.Selection.TypeText Text:=vbTab
+        End If
+        If j > 0 Then
+           smatra = smatra + 1
+        'End If
+        '==
+        If smatra = TempVars!tala_cycle Then
+        '    w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9553, _
+        '         Unicode:=True
+            smatra = 0
+        Else
+            If tala_division(smatra) Then
+                ' single vertical
+        '        w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9474, _
+        '             Unicode:=True
+            End If
+            
+        End If
+        End If
+    Next j
+End Sub
+Sub Create_document()
+    w.Visible = True
+    w.Documents.Add DocumentType:=0
+    pagelayout
+    create_styles
+    Set_tabs
+    
+End Sub
+Sub pagelayout()
+'
+' pagelayout Macro
+'
+'
+    With w.ActiveDocument.Styles(wdStyleNormal).Font
+        If .NameFarEast = .NameAscii Then
+            .NameAscii = ""
+        End If
+        .NameFarEast = ""
+    End With
+    With w.ActiveDocument.PageSetup
+        .LineNumbering.Active = False
+        .Orientation = wdOrientPortrait
+        .TopMargin = InchesToPoints(0.58)
+        .BottomMargin = InchesToPoints(0.58)
+        .LeftMargin = InchesToPoints(0.63)
+        .RightMargin = InchesToPoints(0.58)
+        .Gutter = InchesToPoints(0)
+        .HeaderDistance = InchesToPoints(0.49)
+        .FooterDistance = InchesToPoints(0.49)
+        .PageWidth = InchesToPoints(8.27)
+        .PageHeight = InchesToPoints(11.69)
+        .FirstPageTray = wdPrinterDefaultBin
+        .OtherPagesTray = wdPrinterDefaultBin
+        .SectionStart = wdSectionNewPage
+        .OddAndEvenPagesHeaderFooter = False
+        .DifferentFirstPageHeaderFooter = False
+        .VerticalAlignment = wdAlignVerticalTop
+        .SuppressEndnotes = False
+        .MirrorMargins = False
+        .TwoPagesOnOne = False
+        .BookFoldPrinting = False
+        .BookFoldRevPrinting = False
+        .BookFoldPrintingSheets = 1
+        .GutterPos = wdGutterPosLeft
+    End With
+End Sub
+
+Sub create_styles()
+create_lyrics
+create_ntitle
+create_nsubhead
+create_sahityam
+create_swara
+create_moorchana
+End Sub
+Sub create_swara()
+
+On Error GoTo Mod_style
+
+    w.ActiveDocument.Styles.Add Name:="Swara", Type:=wdStyleTypeParagraph
+Mod_style:
+    With w.ActiveDocument.Styles("Swara").Font
+        .Name = TempVars!Notation_font '"Segoe UI Semibold"
+        .Size = 12
+        .Bold = False
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = wdColorAutomatic
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Scaling = 100
+        .Kerning = 0
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("Swara").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 0
+        .SpaceBeforeAuto = False
+        .spaceafter = 0
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceSingle
+        .Alignment = wdAlignParagraphLeft
+        .WidowControl = True
+        .KeepWithNext = False
+        .KeepTogether = False
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevelBodyText
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    w.ActiveDocument.Styles("Swara").NoSpaceBetweenParagraphsOfSameStyle = False
+    With w.ActiveDocument.Styles("Swara")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "Normal"
+        .NextParagraphStyle = "Normal"
+    End With
+End Sub
+Sub create_sahityam()
+'
+' sahityam Macro
+'
+'
+On Error GoTo Mod_style
+    w.ActiveDocument.Styles.Add Name:="sahityam", Type:=wdStyleTypeParagraph
+    
+Mod_style:
+    With w.ActiveDocument.Styles("sahityam").Font
+        .Name = TempVars!Sahityam_font '"Arial Unicode MS"
+        .Size = 11
+        .Bold = False
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = 192
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Scaling = 100
+        .Kerning = 0
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("sahityam").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 0
+        .SpaceBeforeAuto = False
+        .spaceafter = 12
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceMultiple
+        .LineSpacing = LinesToPoints(1.15)
+        .Alignment = wdAlignParagraphLeft
+        .WidowControl = True
+        .KeepWithNext = False
+        .KeepTogether = True
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevelBodyText
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    With w.ActiveDocument.Styles("sahityam")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "Normal"
+        .NextParagraphStyle = "Normal"
+    End With
+End Sub
+Sub create_ntitle()
+'
+' n_title
+'
+'
+    On Error GoTo Mod_style
+    
+    w.ActiveDocument.Styles.Add Name:="n_title", Type:=wdStyleTypeParagraph
+
+Mod_style:
+    With w.ActiveDocument.Styles("n_title").Font
+        .Name = "+Headings"
+        .Size = 16
+        .Bold = False
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = -553598977
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Spacing = 0.25
+        .Scaling = 100
+        .Kerning = 14
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("n_title").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 0
+        .SpaceBeforeAuto = False
+        .spaceafter = 12
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceSingle
+        .Alignment = wdAlignParagraphCenter
+        .WidowControl = True
+        .KeepWithNext = False
+        .KeepTogether = False
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevelBodyText
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    w.ActiveDocument.Styles("n_title").NoSpaceBetweenParagraphsOfSameStyle = _
+        True
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.ClearAll
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(3.5), Alignment:=wdAlignTabCenter, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(6.8), Alignment:=wdAlignTabRight, Leader:= _
+        wdTabLeaderSpaces
+    With w.ActiveDocument.Styles("n_title")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "Title"
+        .NextParagraphStyle = "Normal"
+    End With
+End Sub
+
+Sub create_nsubhead()
+'
+' n_subhead Macro
+'
+'
+    On Error GoTo Mod_style
+
+    w.ActiveDocument.Styles.Add Name:="n_subhead", Type:=wdStyleTypeParagraph
+    
+Mod_style:
+    With w.ActiveDocument.Styles("n_subhead").Font
+        .Name = "+Headings"
+        .Size = 14
+        .Bold = True
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = -738148353
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Scaling = 100
+        .Kerning = 0
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("n_subhead").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 12
+        .SpaceBeforeAuto = False
+        .spaceafter = 0
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceMultiple
+        .LineSpacing = LinesToPoints(1.15)
+        .Alignment = wdAlignParagraphLeft
+        .WidowControl = True
+        .KeepWithNext = True
+        .KeepTogether = True
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevel1
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    w.ActiveDocument.Styles("n_subhead").NoSpaceBetweenParagraphsOfSameStyle = _
+        False
+    With w.ActiveDocument.Styles("n_subhead")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "Heading 1"
+        .NextParagraphStyle = "Normal"
+    End With
+End Sub
+
+Sub create_lyrics()
+'
+' n_lyrics
+'
+'
+    On Error GoTo Mod_style
+    
+    w.ActiveDocument.Styles.Add Name:="n_lyrics", Type:=wdStyleTypeParagraph
+
+Mod_style:
+    With w.ActiveDocument.Styles("n_lyrics").Font
+        .Name = "Arial Unicode MS"
+        .Size = 11
+        .Bold = False
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = wdColorAutomatic
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Scaling = 100
+        .Kerning = 0
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("n_lyrics").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 0
+        .SpaceBeforeAuto = False
+        .spaceafter = 6
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceMultiple
+        .LineSpacing = LinesToPoints(1.15)
+        .Alignment = wdAlignParagraphLeft
+        .WidowControl = True
+        .KeepWithNext = False
+        .KeepTogether = True
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevelBodyText
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    With w.ActiveDocument.Styles("n_lyrics")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "normal"
+        .NextParagraphStyle = "Normal"
+    End With
+
+End Sub
+Private Sub create_moorchana()
+'
+' moorchana Macro
+'
+'
+        w.ActiveDocument.Styles.Add Name:="n_moorchana", Type:=wdStyleTypeParagraph
+    With w.ActiveDocument.Styles("n_moorchana").Font
+        .Name = "Calibri"
+        .Size = 12
+        .Bold = False
+        .Italic = False
+        .Underline = wdUnderlineNone
+        .UnderlineColor = wdColorAutomatic
+        .Strikethrough = False
+        .DoubleStrikeThrough = False
+        .Outline = False
+        .Emboss = False
+        .Shadow = False
+        .Hidden = False
+        .SmallCaps = False
+        .AllCaps = False
+        .Color = wdColorAutomatic
+        .Engrave = False
+        .Superscript = False
+        .Subscript = False
+        .Scaling = 100
+        .Kerning = 0
+        .Animation = wdAnimationNone
+        .Ligatures = wdLigaturesNone
+        .NumberSpacing = wdNumberSpacingDefault
+        .NumberForm = wdNumberFormDefault
+        .StylisticSet = wdStylisticSetDefault
+        .ContextualAlternates = 0
+    End With
+    With w.ActiveDocument.Styles("n_moorchana").ParagraphFormat
+        .LeftIndent = InchesToPoints(0)
+        .RightIndent = InchesToPoints(0)
+        .SpaceBefore = 0
+        .SpaceBeforeAuto = False
+        .spaceafter = 0
+        .SpaceAfterAuto = False
+        .LineSpacingRule = wdLineSpaceMultiple
+        .LineSpacing = LinesToPoints(1.15)
+        .Alignment = wdAlignParagraphLeft
+        .WidowControl = True
+        .KeepWithNext = False
+        .KeepTogether = False
+        .PageBreakBefore = False
+        .NoLineNumber = False
+        .Hyphenation = True
+        .FirstLineIndent = InchesToPoints(0)
+        .OutlineLevel = wdOutlineLevelBodyText
+        .CharacterUnitLeftIndent = 0
+        .CharacterUnitRightIndent = 0
+        .CharacterUnitFirstLineIndent = 0
+        .LineUnitBefore = 0
+        .LineUnitAfter = 0
+        .MirrorIndents = False
+        .TextboxTightWrap = wdTightNone
+    End With
+    w.ActiveDocument.Styles("n_moorchana").NoSpaceBetweenParagraphsOfSameStyle = _
+         False
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.ClearAll
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(0.7), Alignment:=wdAlignTabLeft, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(3.5), Alignment:=wdAlignTabCenter, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(6.8), Alignment:=wdAlignTabRight, Leader:= _
+        wdTabLeaderSpaces
+    With w.ActiveDocument.Styles("n_moorchana")
+        .AutomaticallyUpdate = False
+        .BaseStyle = "Normal"
+        .NextParagraphStyle = "n_moorchana"
+    End With
+End Sub
+Private Sub Set_tabs()
+'
+tabs "Swara"
+tabs "sahityam"
+
+End Sub
+Private Sub tabs(instyle As String)
+Dim tabpos As Single
+Dim j As Long, i As Long
+'
+' tabs Macro .4 and .2 changed to .3 and .15
+'
+'
+tabpos = 0.3 + TempVars!beats_per_line * (TempVars!Nadai * ctab + 0.15)
+If tabpos > 10.2 Then
+msgbox "Tab beats per line " & TempVars!beats_per_line & " can not be accomodated. Exceeds page width"
+End
+ElseIf tabpos > 7 Then
+    w.ActiveDocument.PageSetup.Orientation = wdOrientLandscape
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.ClearAll
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(5.3), Alignment:=wdAlignTabCenter, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_title").ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(10.2), Alignment:=wdAlignTabRight, Leader:= _
+        wdTabLeaderSpaces
+        
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.ClearAll
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(0.7), Alignment:=wdAlignTabLeft, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(5.3), Alignment:=wdAlignTabCenter, Leader:= _
+        wdTabLeaderSpaces
+    w.ActiveDocument.Styles("n_moorchana").ParagraphFormat.TabStops.Add Position _
+        :=InchesToPoints(10.2), Alignment:=wdAlignTabRight, Leader:= _
+        wdTabLeaderSpaces
+End If
+
+    w.ActiveDocument.Styles(instyle).NoSpaceBetweenParagraphsOfSameStyle = False
+    w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.ClearAll
+    w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(0.3), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+    tabpos = 0.3
+If TempVars!Talam Like "*Chapu" Then
+    For j = 1 To TempVars!Nadai * 1.5
+        tabpos = tabpos + ctab
+        w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+            InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+    Next j
+    tabpos = tabpos + 0.15
+    w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+For i = 1 To TempVars!beats_per_line - 1.5
+    For j = 1 To TempVars!Nadai
+        tabpos = tabpos + ctab
+        w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+            InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+    Next j
+    tabpos = tabpos + 0.15
+    w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+Next i
+
+
+Else
+For i = 1 To TempVars!beats_per_line
+    For j = 1 To TempVars!Nadai
+        tabpos = tabpos + ctab
+        w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+            InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+    Next j
+    tabpos = tabpos + 0.15
+    w.ActiveDocument.Styles(instyle).ParagraphFormat.TabStops.Add Position:= _
+        InchesToPoints(tabpos), Alignment:=wdAlignTabLeft, Leader:=wdTabLeaderSpaces
+Next i
+
+End If
+
+End Sub
+Function Count_aksharams(ByRef str_in As String, title As String, SorN As String, delim As String) As Variant
+Dim vstr As String, wstr As String, c As String, nextc As String, prevc As String
+Dim strlen As Integer
+Dim matra As Single, matracnt As Single
+Dim i As Integer, j As Integer, k As Integer
+Dim regex1 As New RegExp
+Dim regex2 As New RegExp
+Dim regexlc As New RegExp
+Dim regex As New RegExp
+Dim matra_div As Integer
+Dim aksharams As Integer
+'
+'new idea to  build the notation in array
+'only for sahityam
+'
+
+regex1.Pattern = "[A-Z;]"
+regex2.Pattern = "[a-zA-Z]"
+regexlc.Pattern = "[a-z,]"
+'ReDim duritha(gparacnt)
+wstr = ""
+vstr = ""
+matra = 4
+matra_div = 1
+matracnt = 0
+aksharams = 0
+regex.Pattern = "[S,N]"
+If regex.Test(UCase(SorN)) Then ' Like "[S,N]" Then
+vstr = ""
+For j = 1 To Len(str_in)
+    c = Mid(str_in, j, 1)
+    'If Asc(c) = 9 Then
+    '    c = "-"
+    'End If
+    nextc = ""
+    regex.Pattern = "[aie]"
+    If j < Len(str_in) And regex.Test(Mid(str_in, j + 1, 1)) Then
+       nextc = Mid(str_in, j + 1, 1)
+    End If
+    If Asc(c) <= 15 Or Asc(c) >= 124 Then GoTo next_j
+    c = Trim(c)
+Select Case UCase(SorN)
+Case "N"
+    regex.Pattern = "[A-Za-z,;(]"
+    If regex.Test(c) Then
+    Do While matracnt >= 4
+        vstr = vstr & wstr & delim
+        wstr = " "
+        matracnt = matracnt - 4
+        aksharams = aksharams + 4
+        If matracnt = 0 Then wstr = ""
+    Loop
+    End If
+    If c = "(" Then
+        wstr = wstr & c
+        matra_div = matra_div * 2
+        
+        GoTo next_j
+    End If
+    If c = "." Or c = "'" Or c = "*" Then  'octave mark * - eduppu
+        wstr = wstr & c
+        GoTo next_j
+    End If
+    regex.Pattern = "[ai]"
+    If regex.Test(c) Then GoTo next_j
+    
+    If regex.Test(nextc) Or regex1.Test(c) Then 'deergham
+        matracnt = matracnt + (matra * 2) / matra_div
+        'c = UCase(c)
+        wstr = wstr & c & nextc
+        nextc = ""
+    ElseIf regexlc.Test(c) Then ' Like "[a-z,]" Then
+        wstr = wstr & c
+        matracnt = matracnt + matra / matra_div
+    End If
+    If c = ")" Then
+       matra_div = matra_div / 2
+       wstr = wstr & c
+    End If
+
+Case "S"  ' Sahithyam
+
+    regex.Pattern = "[,;]"
+    If regex.Test(prevc) Then
+        Do While matracnt >= 4
+            vstr = vstr & wstr & delim
+            wstr = " "
+            matracnt = matracnt - 4
+            aksharams = aksharams + 4
+            If matracnt = 0 Then wstr = ""
+        Loop
+    'Else
+    End If
+    wstr = wstr & c
+
+    'End If
+
+    If c = ";" Then 'deergham
+        matracnt = matracnt + (matra * 2) / matra_div
+        'c = UCase(c)
+        'wstr = wstr & c
+ '
+    ElseIf c = "," Then
+        'wstr = wstr & c
+        matracnt = matracnt + matra / matra_div
+    End If
+    prevc = c
+End Select
+next_j:
+Next j
+End If
+If wstr <> "" Then
+    Do While matracnt >= 4
+        vstr = vstr & wstr & delim
+        wstr = " "
+        matracnt = matracnt - 4
+        aksharams = aksharams + 4
+        If matracnt = 0 Then wstr = ""
+    Loop
+End If
+str_in = vstr
+Count_aksharams = aksharams / 4
+End Function
+Sub read_lyrics_fromxl(rst As Recordset)
+    Dim ifile As String
+    Dim Lyrics As Recordset
+    Dim lng_line As Long
+    Dim strheading As String
+    Dim vstr As String
+    Dim lng_seq As Long
+    Dim rng As excel.Range
+    Dim xlApp As excel.Application
+    Dim xlBook As excel.Workbook
+    Dim xlSheet As excel.Worksheet
+    Dim rw As excel.Range
+    Dim i As Long, reccount As Long
+    
+    reccount = DCount("*", "Lyrics", TempVars!filter)
+    If reccount > 0 Then
+        CurrentDb.Execute "delete from lyrics where " & TempVars!filter
+    End If
+    Set Lyrics = CurrentDb.OpenRecordset("Lyrics")
+    
+    Set xlApp = CreateObject("Excel.Application")
+    ifile = TempVars!ipath & "\" & Trim(TempVars!title) & ".xlsx"
+    xlApp.Workbooks.Open filename:=ifile
+    Set xlSheet = xlApp.ActiveSheet
+    Set rng = xlSheet.UsedRange
+    'gparacnt = 0
+    For Each rw In rng.Rows
+    
+    If IsEmpty(rw.Cells(1, 1)) Then GoTo next_row
+    If UCase(rw.Cells(1, 1).Value) = "N" Then Exit Sub
+    If UCase(rw.Cells(1, 1).Value) = "H" Then
+        strheading = rw.Cells(1, 3).Value
+     End If
+    If UCase(rw.Cells(1, 1).Value) = "L" Then
+    With Lyrics
+        .AddNew
+        !Kriti = rst!Kriti
+        !Ragam = rst!Ragam
+        !Talam = rst!Talam
+        !Heading = strheading
+        !Lyric = rw.Cells(1, 3)
+        lng_seq = lng_seq + 10
+        !Seq = lng_seq
+        .Update
+    End With
+     End If
+        
+     
+'        gparacnt = gparacnt + 1
+next_row:
+    Next rw
+'read the sheet and build the array straight
+  
+    xlApp.ActiveWorkbook.Close
+    Set xlSheet = Nothing
+     
+
+End Sub
+Private Sub DrawLine()
+ Dim spaceafter
+ If get_config("DrawSeparatorLine") <> "YES" Then Exit Sub
+ 
+If w.ActiveDocument.PageSetup.TopMargin + 1 > w.Selection.Information(wdVerticalPositionRelativeToPage) Then
+    Exit Sub ' at bottom of page
+End If
+
+w.Selection.ParagraphFormat.spaceafter = 0
+ w.Selection.InlineShapes.AddHorizontalLineStandard
+w.Selection.ParagraphFormat.spaceafter = spaceafter
+
+End Sub

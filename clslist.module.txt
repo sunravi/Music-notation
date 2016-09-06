@@ -1,0 +1,139 @@
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+Option Compare Database
+Option Explicit
+'
+' newlist initialises the dictionary variables
+' and creates n.0->0
+'Append
+'   n.0 ->16
+'   n.16->16
+'   p.16->0
+
+Private Const increment = 16
+Private m_first As Long
+Private m_last As Long
+
+Private n As New Dictionary
+Private p As New Dictionary
+
+Sub newlist()
+n.RemoveAll
+p.RemoveAll
+'Set n = CreateObject("dictionary")
+n.Add 0, 0
+'Set p = CreateObject("dictionary")
+m_first = 0
+m_last = 0
+
+End Sub
+
+Private Function get_next(node As Long) As Long
+If n.Exists(node) Then
+    get_next = n(node)
+Else
+    get_next = vbNull
+End If
+End Function
+Private Function get_prev(node As Long) As Long
+If p.Exists(node) Then
+    get_prev = p(node)
+Else
+    get_prev = vbNull
+End If
+End Function
+Sub append(node As Long)
+update_list node, "After", m_last
+End Sub
+Sub Delete(node As Long)
+update_list node, "Delete", node
+End Sub
+Function new_node(pos As String, node As Long) As Long
+' new_code ("before",5) or new_node("after",16)
+Dim next_node As Long
+Dim prev_node As Long
+new_node = 0
+Select Case UCase(pos)
+Case "AFTER"
+    next_node = get_next(node)
+    If Not isnull(next_node) Then
+        new_node = (next_node - node)
+        If new_node Mod 2 <> 0 Then
+            new_node = 0
+        ElseIf new_node = 0 Then
+            new_node = node + increment
+        Else
+            new_node = node + new_node / 2
+        End If
+    End If
+Case "BEFORE"
+    prev_node = get_prev(node)
+    If Not isnull(prev_node) Then
+        new_node = (node - prev_node)
+        If new_node Mod 2 <> 0 Then
+            new_node = 0
+        Else
+            new_node = node - new_node / 2
+        End If
+    End If
+End Select
+update_list new_node, pos, node
+End Function
+Private Sub update_list(new_node As Long, pos As String, node As Long)
+Dim anode As Long
+Dim bnode As Long
+If new_node <> 0 Then
+
+Select Case UCase(pos)
+Case "AFTER"
+    anode = node
+    bnode = n(node)
+Case "BEFORE"
+    anode = p(node)
+    bnode = node
+Case "DELETE"
+    anode = p(node)
+    bnode = n(node)
+End Select
+
+
+'
+If UCase(pos) = "DELETE" Then
+    n(anode) = bnode
+    p(bnode) = anode
+    n.Remove (anode)
+    p.Remove (bnode)
+    If node = m_last Then
+        n(anode) = anode
+        m_last = anode
+    End If
+ElseIf anode = m_last Then
+        n.Add new_node, new_node
+        p.Add new_node, bnode
+    Else
+        n.Add new_node, n(anode)
+        p.Add new_node, p(bnode)
+    End If
+    n(anode) = new_node
+    If bnode <> m_last Then
+       p(bnode) = new_node
+    m_last = new_node
+End If
+End If
+
+End Sub
+Sub list_nodes()
+Dim key As Variant
+Debug.Print "n nodes"
+For Each key In n.Keys
+Debug.Print key, n(key)
+
+Next
+Debug.Print "p nodes"
+For Each key In p.Keys
+Debug.Print key, p(key)
+
+Next
+End Sub
