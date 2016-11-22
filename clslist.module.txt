@@ -58,7 +58,7 @@ new_node = 0
 Select Case UCase(pos)
 Case "AFTER"
     next_node = get_next(node)
-    If Not isnull(next_node) Then
+    If Not IsNull(next_node) Then
         new_node = (next_node - node)
         If new_node Mod 2 <> 0 Then
             new_node = 0
@@ -70,7 +70,7 @@ Case "AFTER"
     End If
 Case "BEFORE"
     prev_node = get_prev(node)
-    If Not isnull(prev_node) Then
+    If Not IsNull(prev_node) Then
         new_node = (node - prev_node)
         If new_node Mod 2 <> 0 Then
             new_node = 0
@@ -119,8 +119,8 @@ ElseIf anode = m_last Then
     n(anode) = new_node
     If bnode <> m_last Then
        p(bnode) = new_node
-    m_last = new_node
-End If
+    End If
+m_last = new_node
 End If
 
 End Sub
