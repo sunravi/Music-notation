@@ -161,8 +161,11 @@ Set w = New Word.Application
 '
        End If
  '       End If
+If batch!Status = "Check" Then
+    msgbox "Check notation"
+End If
 
-w.ActiveDocument.Close (False)
+w.ActiveDocument.close (False)
 
 w.Quit
 Set w = Nothing
@@ -181,8 +184,9 @@ Sub setup_tempvars(batch As Recordset)
 Dim tala_beats As String
 Dim l_beats As Integer
     TempVars!title = batch!Kriti & "-" & batch!Ragam & "-" & batch!Talam
-    TempVars!ipath = CurrentProject.path & "\" & get_config("SourceFolder")
-    TempVars!filter = "kriti & '-' & ragam & '-' & talam = '" & TempVars!title & "'"
+    TempVars!ipath = CurrentProject.path & TempVars!folder & "\" & "\" & get_config("SourceFolder")
+    TempVars!Filter = "kriti & '-' & ragam & '-' & talam = '" & TempVars!title & "'"
+    TempVars!Filter_full = "user = """ & TempVars!User & """ and " & TempVars!Filter
     TempVars!abcoption = UCase(get_config("abcmidioption"))
     TempVars!Kriti = CStr(batch!Kriti)
     TempVars!Ragam = CStr(batch!Ragam)
@@ -195,8 +199,8 @@ Dim l_beats As Integer
     TempVars!abc_file = ""
     TempVars!aro = Trim(DLookup("Arohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
     TempVars!avaro = Trim(DLookup("Avarohanam", "Ragams", "Ragam='" & batch!Ragam & "'"))
-    TempVars!opath = CurrentProject.path & "\" & get_config("NotationFolder")
-    TempVars!abcpath = CurrentProject.path & "\" & get_config("abcmidifolder")
+    TempVars!opath = CurrentProject.path & "\" & TempVars!folder & "\" & get_config("NotationFolder")
+    TempVars!abcpath = CurrentProject.path & "\" & TempVars!folder & "\" & get_config("abcmidifolder")
     TempVars!strfilter = "kriti = '" & batch!Kriti & "' and " & _
              "ragam = '" & batch!Ragam & "' and " & _
              "talam = '" & batch!Talam & "'"
@@ -309,11 +313,11 @@ Sub read_xlfile(rst As Recordset)
     Dim strheading As String
     Dim vstr As String
     Dim lng_seq As Long
-    Dim rng As excel.Range
-    Dim xlApp As excel.Application
-    Dim xlBook As excel.Workbook
-    Dim xlSheet As excel.Worksheet
-    Dim rw As excel.Range
+    Dim rng As Excel.Range
+    Dim xlApp As Excel.Application
+    Dim xlBook As Excel.Workbook
+    Dim xlSheet As Excel.Worksheet
+    Dim rw As Excel.Range
     Dim i As Long
     
     'ReDim Preserve paras(200) As String
@@ -348,6 +352,7 @@ Sub read_xlfile(rst As Recordset)
 '            flush = False
 '        End If
         Notes.AddNew
+        Notes!User = rst!User
         Notes!Kriti = rst!Kriti
         Notes!Ragam = rst!Ragam
         Notes!Talam = rst!Talam
@@ -408,7 +413,7 @@ next_row:
     Next rw
 'read the sheet and build the array straight
   
-    xlApp.ActiveWorkbook.Close
+    xlApp.ActiveWorkbook.close
     xlApp.Quit
     Set xlSheet = Nothing
      
@@ -870,7 +875,7 @@ Dim chapu As Integer
 Dim abc As String
 Dim j As Long
 Dim vstr As String
-Dim uline As Integer, ulineend As Integer
+Dim uline As Single, ulineend As Single
 Const kalam As Single = 1.4 'to get underline code
 uline = 0
 abc = ""
@@ -918,6 +923,7 @@ End If
         ' w.Selection.Font.Underline = wdUnderlineNone
         
         If (j - chapu) / TempVars!Nadai = (j - chapu) \ TempVars!Nadai And j - chapu > 0 Then
+            w.Selection.Font.Underline = ulineend
             w.Selection.TypeText Text:=vbTab
 ' single line nadai separator
             w.Selection.InsertSymbol Font:="Arial Unicode MS", CharacterNumber:=9474, _
@@ -1016,6 +1022,9 @@ Sub Create_document()
     pagelayout
     create_styles
     Set_tabs
+    w.ActiveWindow.ActivePane.View.SeekView = wdSeekCurrentPageHeader
+    w.Selection.TypeText Text:=vbTab & vbTab & TempVars!User
+    w.ActiveWindow.ActivePane.View.SeekView = wdSeekMainDocument
     
 End Sub
 Sub pagelayout()
@@ -1712,31 +1721,32 @@ Sub read_lyrics_fromxl(rst As Recordset)
     Dim strheading As String
     Dim vstr As String
     Dim lng_seq As Long
-    Dim rng As excel.Range
-    Dim xlApp As excel.Application
-    Dim xlBook As excel.Workbook
-    Dim xlSheet As excel.Worksheet
-    Dim rw As excel.Range
+    Dim rng As Excel.Range
+    Dim xlApp As Excel.Application
+    Dim xlBook As Excel.Workbook
+    Dim xlSheet As Excel.Worksheet
+    Dim rw As Excel.Range
     Dim i As Long, reccount As Long
     
-    reccount = DCount("*", "Lyrics", TempVars!filter)
+    reccount = DCount("*", "Lyrics", TempVars!Filter)
     If reccount > 0 Then
-        CurrentDb.Execute "delete from lyrics where " & TempVars!filter
+        CurrentDb.Execute "delete from lyrics where " & TempVars!Filter
     End If
     Set Lyrics = CurrentDb.OpenRecordset("Lyrics")
     
-    Set xlApp = CreateObject("Excel.Application")
+    Set xlApp = New Excel.Application
+    'xlApp.Visible = True
     ifile = TempVars!ipath & "\" & Trim(TempVars!title) & ".xlsx"
-    xlApp.Workbooks.Open filename:=ifile
+    Set xlBook = xlApp.Workbooks.Open(filename:=ifile)
     Set xlSheet = xlApp.ActiveSheet
     Set rng = xlSheet.UsedRange
     'gparacnt = 0
     For Each rw In rng.Rows
     
     If IsEmpty(rw.Cells(1, 1)) Then GoTo next_row
-    If UCase(rw.Cells(1, 1).Value) = "N" Then Exit Sub
+    If UCase(rw.Cells(1, 1).Value) = "N" Then GoTo next_row
     If UCase(rw.Cells(1, 1).Value) = "H" Then
-        strheading = rw.Cells(1, 3).Value
+        strheading = Trim(rw.Cells(1, 3).Value2)
      End If
     If UCase(rw.Cells(1, 1).Value) = "L" Then
     With Lyrics
@@ -1744,7 +1754,7 @@ Sub read_lyrics_fromxl(rst As Recordset)
         !Kriti = rst!Kriti
         !Ragam = rst!Ragam
         !Talam = rst!Talam
-        !Heading = strheading
+        !Heading = clean(strheading)
         !Lyric = rw.Cells(1, 3)
         lng_seq = lng_seq + 10
         !Seq = lng_seq
@@ -1758,8 +1768,13 @@ next_row:
     Next rw
 'read the sheet and build the array straight
   
-    xlApp.ActiveWorkbook.Close
+    xlBook.close
+    xlApp.Quit
+    Set rw = Nothing
+    Set rng = Nothing
     Set xlSheet = Nothing
+    Set xlBook = Nothing
+    Set xlApp = Nothing
      
 
 End Sub
