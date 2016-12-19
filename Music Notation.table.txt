@@ -38,7 +38,7 @@
 </xsd:restriction>
 </xsd:simpleType>
 </xsd:element>
-<xsd:element name="Comment" minOccurs="0" od:jetType="memo" od:sqlSType="ntext">
+<xsd:element name="Comment" minOccurs="0" od:jetType="memo" od:sqlSType="ntext" od:textFormat="1">
 <xsd:simpleType>
 <xsd:restriction base="xsd:string">
 <xsd:maxLength value="536870910"/>

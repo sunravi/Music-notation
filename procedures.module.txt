@@ -162,7 +162,7 @@ Set w = New Word.Application
        End If
  '       End If
 If batch!Status = "Check" Then
-    msgbox "Check notation"
+    MsgBox "Check notation"
 End If
 
 w.ActiveDocument.close (False)
@@ -186,7 +186,7 @@ Dim l_beats As Integer
     TempVars!title = batch!Kriti & "-" & batch!Ragam & "-" & batch!Talam
     TempVars!ipath = CurrentProject.path & TempVars!folder & "\" & "\" & get_config("SourceFolder")
     TempVars!Filter = "kriti & '-' & ragam & '-' & talam = '" & TempVars!title & "'"
-    TempVars!Filter_full = "user = """ & TempVars!User & """ and " & TempVars!Filter
+    TempVars!filter_full = "user = """ & TempVars!User & """ and " & TempVars!Filter
     TempVars!abcoption = UCase(get_config("abcmidioption"))
     TempVars!Kriti = CStr(batch!Kriti)
     TempVars!Ragam = CStr(batch!Ragam)
@@ -517,6 +517,7 @@ Dim regex2 As New RegExp
 Dim regexlc As New RegExp
 Dim regex As New RegExp
 Dim matra_div As Integer
+Dim berror As Boolean
 '
 'new idea to  build the notation in array
 'only for sahityam
@@ -533,7 +534,7 @@ If para_type(i) Like "[!S,N]" Or paras(i) = "" Then GoTo next_i
 
 '
 vstr = paras(i)
-mcnt = Count_aksharams(vstr, TempVars!title, para_type(i), "$")
+mcnt = Count_aksharams(vstr, TempVars!title, para_type(i), "$", berror)
 'Debug.Print mcnt
 wstr = ""
 vstr = Replace(vstr, "-", "")
@@ -582,7 +583,7 @@ Dim temp_array() As String
 temp_array() = Split(para, "$")
 
 If (UBound(temp_array) + 1) Mod TempVars!div_per_line > 0 Then
-   msgbox TempVars!title & vbCrLf & "Matra count error in row " & i & " " & UBound(temp_array) + 1
+   MsgBox TempVars!title & vbCrLf & "Matra count error in row " & i & " " & UBound(temp_array) + 1
 End If
 Erase temp_array
 End Sub
@@ -1022,8 +1023,8 @@ Sub Create_document()
     pagelayout
     create_styles
     Set_tabs
-    w.ActiveWindow.ActivePane.View.SeekView = wdSeekCurrentPageHeader
-    w.Selection.TypeText Text:=vbTab & vbTab & TempVars!User
+    w.ActiveWindow.ActivePane.View.SeekView = wdSeekCurrentPageFooter
+    w.Selection.TypeText Text:="Notated by : " & TempVars!User
     w.ActiveWindow.ActivePane.View.SeekView = wdSeekMainDocument
     
 End Sub
@@ -1526,7 +1527,7 @@ Dim j As Long, i As Long
 '
 tabpos = 0.3 + TempVars!beats_per_line * (TempVars!Nadai * ctab + 0.15)
 If tabpos > 10.2 Then
-msgbox "Tab beats per line " & TempVars!beats_per_line & " can not be accomodated. Exceeds page width"
+MsgBox "Tab beats per line " & TempVars!beats_per_line & " can not be accomodated. Exceeds page width"
 End
 ElseIf tabpos > 7 Then
     w.ActiveDocument.PageSetup.Orientation = wdOrientLandscape
@@ -1591,7 +1592,7 @@ Next i
 End If
 
 End Sub
-Function Count_aksharams(ByRef str_in As String, title As String, SorN As String, delim As String) As Variant
+Function Count_aksharams(ByRef str_in As String, title As String, SorN As String, delim As String, berror As Boolean) As Variant
 Dim vstr As String, wstr As String, c As String, nextc As String, prevc As String
 Dim strlen As Integer
 Dim matra As Single, matracnt As Single
@@ -1602,6 +1603,7 @@ Dim regexlc As New RegExp
 Dim regex As New RegExp
 Dim matra_div As Integer
 Dim aksharams As Integer
+Dim arr() As String
 '
 'new idea to  build the notation in array
 'only for sahityam
@@ -1634,6 +1636,7 @@ For j = 1 To Len(str_in)
     c = Trim(c)
 Select Case UCase(SorN)
 Case "N"
+    'c = Trim(c)
     regex.Pattern = "[A-Za-z,;(]"
     If regex.Test(c) Then
     Do While matracnt >= 4
@@ -1693,7 +1696,7 @@ Case "S"  ' Sahithyam
         'c = UCase(c)
         'wstr = wstr & c
  '
-    ElseIf c = "," Or c = "-" Then
+    ElseIf c = "," Or c = "-" Or c = " " Then
         'wstr = wstr & c
         matracnt = matracnt + matra / matra_div
     End If
@@ -1712,6 +1715,11 @@ If wstr <> "" Then
     Loop
 End If
 str_in = vstr
+arr() = Split(str_in, "$")
+If UBound(arr) > 8 * TempVars!Nadai Then
+    MsgBox "Error - Only " & 8 * TempVars!Nadai & " matras can be accomodated in one line."
+    berror = True
+    End If
 Count_aksharams = aksharams / 4
 End Function
 Sub read_lyrics_fromxl(rst As Recordset)
